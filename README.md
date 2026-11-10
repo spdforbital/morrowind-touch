@@ -13,8 +13,7 @@ and keyboard.
   - Use, Jump, Ready Weapon, Ready Magic, Sneak, Inventory and Pause.
   - A ≡ top bar with 3rd person, Quicksave, Journal and Rest. Its mouse icon hides the overlay so you can tap
     Steam Link itself.
-- **Buttons for the companion mods** in a column on the left: objective panel, Collector's Ledger, and the
-  Skyrim-style compass on/off (Quest Markers Plus).
+- **A Collector's Ledger button** (gem) on the left, for the companion mod.
 - **Menus work like OpenMW for Android:** when a game menu opens, only the right stick (which moves the cursor), Attack
   (which clicks), Pause, Journal and Inventory stay. The overlay switches **automatically**, because the PC tells it when
   a menu is open.
