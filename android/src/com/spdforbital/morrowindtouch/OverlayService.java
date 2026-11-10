@@ -53,11 +53,17 @@ public class OverlayService extends Service {
                 NotificationManager.IMPORTANCE_LOW));
         PendingIntent open = PendingIntent.getActivity(this, 0,
                 new Intent(this, MainActivity.class), PendingIntent.FLAG_IMMUTABLE);
+        PendingIntent hide = PendingIntent.getService(this, 1,
+                new Intent(this, OverlayService.class).setAction(ACTION_TOGGLE), PendingIntent.FLAG_IMMUTABLE);
+        PendingIntent stop = PendingIntent.getService(this, 2,
+                new Intent(this, OverlayService.class).setAction(ACTION_STOP), PendingIntent.FLAG_IMMUTABLE);
         Notification n = new Notification.Builder(this, "mwt")
                 .setContentTitle("Morrowind Touch")
-                .setContentText("Controls are on screen. Tap to open settings.")
+                .setContentText("Controls show while Morrowind runs. Tap for settings.")
                 .setSmallIcon(android.R.drawable.ic_media_play)
                 .setContentIntent(open)
+                .addAction(new Notification.Action.Builder(null, "Hide / show", hide).build())
+                .addAction(new Notification.Action.Builder(null, "Stop", stop).build())
                 .setOngoing(true)
                 .build();
         if (Build.VERSION.SDK_INT >= 34) {
@@ -65,6 +71,20 @@ public class OverlayService extends Service {
         } else {
             startForeground(1, n);
         }
+    }
+
+    static final String ACTION_TOGGLE = "com.spdforbital.morrowindtouch.TOGGLE",
+            ACTION_STOP = "com.spdforbital.morrowindtouch.STOP";
+
+    @Override
+    public int onStartCommand(Intent intent, int flags, int startId) {
+        String a = intent != null ? intent.getAction() : null;
+        if (ACTION_STOP.equals(a)) {
+            stopSelf();
+        } else if (ACTION_TOGGLE.equals(a) && view != null) {
+            view.toggleUserHidden();
+        }
+        return START_NOT_STICKY;
     }
 
     @Override

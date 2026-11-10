@@ -66,6 +66,7 @@ public class OverlayView extends View implements Net.Listener {
     private final SparseArray<Bitmap> bitmaps = new SparseArray<>();
     private final SparseArray<Ptr> ptrs = new SparseArray<>();
     private boolean hidden, topVisible, inMenu, linkOk, badPassword;
+    private boolean userHidden, gameOff = true;   // collapsed by the user / because the game isn't running
     private final El hideBtn;
 
     private final Paint img = new Paint(Paint.FILTER_BITMAP_FLAG), stroke = new Paint(Paint.ANTI_ALIAS_FLAG),
@@ -112,7 +113,7 @@ public class OverlayView extends View implements Net.Listener {
         els.add(new El(KEY, TOPBAR, R.drawable.journal, null, TOP * 3, 0, SIZE, Net.K_J));
         els.add(new El(KEY, TOPBAR, R.drawable.wait, null, TOP * 4, 0, SIZE, Net.K_T));
         els.add(new El(KEYBOARD, TOPBAR, R.drawable.keyboard, null, TOP * 5, 0, SIZE, 0));
-        hideBtn = new El(HIDE, TOPBAR, R.drawable.mouse, null, TOP * 6, 0, SIZE, 0);
+        hideBtn = new El(HIDE, ALWAYS, R.drawable.mouse, null, 0, 180, SIZE, 0);
         els.add(hideBtn);
 
         for (El e : els) {
@@ -147,11 +148,24 @@ public class OverlayView extends View implements Net.Listener {
         this.wm = wm;
         this.lp = lp;
         wm.addView(this, lp);
+        post(this::updateHidden);    // start collapsed until the PC says Morrowind is running
     }
 
     void detach() {
         closeKeyboard();
         try { wm.removeView(this); } catch (Exception ignored) {}
+    }
+
+    /** Collapse when the user asked to, or when Morrowind isn't running / the PC can't be reached. */
+    private void updateHidden() {
+        boolean h = userHidden || gameOff || !linkOk;
+        if (h != hidden) setHidden(h);
+        else invalidate();
+    }
+
+    void toggleUserHidden() {
+        userHidden = !userHidden;
+        updateHidden();
     }
 
     private void setHidden(boolean h) {
@@ -236,7 +250,9 @@ public class OverlayView extends View implements Net.Listener {
     @Override
     public void onMode(String m) {
         post(() -> {
-            boolean menu = !(m.equals("none") || m.startsWith("Loading"));
+            boolean off = m.equals("off");
+            if (off != gameOff) { gameOff = off; updateHidden(); }
+            boolean menu = !(off || m.equals("none") || m.startsWith("Loading"));
             if (menu != inMenu) {
                 inMenu = menu;
                 for (El e : els) e.latched = false;
@@ -248,7 +264,7 @@ public class OverlayView extends View implements Net.Listener {
 
     @Override
     public void onLink(boolean ok) {
-        post(() -> { linkOk = ok; if (ok) badPassword = false; invalidate(); });
+        post(() -> { linkOk = ok; if (ok) badPassword = false; updateHidden(); });
     }
 
     @Override
@@ -270,7 +286,13 @@ public class OverlayView extends View implements Net.Listener {
         int a = ev.getActionMasked();
         int idx = ev.getActionIndex();
         if (hidden) {
-            if (a == MotionEvent.ACTION_UP) setHidden(false);
+            if (a == MotionEvent.ACTION_UP) {
+                if (userHidden) toggleUserHidden();
+                else android.widget.Toast.makeText(getContext(),
+                        !linkOk ? (badPassword ? "Morrowind Touch: wrong password" : "Morrowind Touch: can't reach the PC")
+                                : "Morrowind Touch: controls appear when Morrowind is running",
+                        android.widget.Toast.LENGTH_SHORT).show();
+            }
             return true;
         }
         switch (a) {
@@ -331,7 +353,7 @@ public class OverlayView extends View implements Net.Listener {
                 ptrs.remove(ev.getPointerId(idx));
                 if (p != null && p.el != null) {
                     if (p.el.kind == TOGGLE_TOP) topVisible = !topVisible;
-                    else if (p.el.kind == HIDE) { setHidden(true); return true; }
+                    else if (p.el.kind == HIDE) { toggleUserHidden(); return true; }
                     else if (p.el.kind == KEYBOARD) { openKeyboard(); }
                 }
                 break;
@@ -394,6 +416,9 @@ public class OverlayView extends View implements Net.Listener {
         if (hidden) {
             Bitmap b = bitmaps.get(R.drawable.mouse);
             cv.drawBitmap(b, null, new RectF(0, 0, getWidth(), getHeight()), img);
+            box.setColor(!linkOk ? Color.rgb(200, 60, 50) : (userHidden ? Color.rgb(90, 180, 90) : Color.GRAY));
+            cv.drawCircle(getWidth() * 0.82f, getHeight() * 0.18f, getWidth() * 0.12f, box);
+            box.setColor(Color.argb(Math.round(0.4f * 255), 60, 60, 60));
             return;
         }
         for (El e : els) {

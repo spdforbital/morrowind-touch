@@ -173,7 +173,7 @@ class ModeWatcher:
                     except OSError:
                         pass
         if not self.running:
-            return 'none'
+            return 'off'                                        # game closed: the phone collapses its controls
         try:
             st = os.stat(LOG)
         except FileNotFoundError:
@@ -195,8 +195,10 @@ class ModeWatcher:
 def load_key():
     """Every packet is signed with HMAC-SHA256 using a key made from the password in password.txt."""
     pw = open(PASSWORD_FILE, encoding='utf-8').read().strip()
-    if len(pw) < 8:
-        raise SystemExit('password.txt must hold a password of at least 8 characters')
+    if not pw:
+        raise SystemExit('password.txt is empty')
+    if len(pw) < 10:
+        print('note: short password - fine at home, use a longer one if the PC is reachable from the internet', flush=True)
     return hashlib.sha256(('mwt2:' + pw).encode('utf-8')).digest()
 
 

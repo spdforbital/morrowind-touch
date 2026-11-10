@@ -11,8 +11,10 @@ and keyboard.
   - Left stick to walk, right stick to look.
   - A big Attack button that you can also hold and drag to aim.
   - Use, Jump, Ready Weapon, Ready Magic, Sneak, Inventory and Pause.
-  - A ≡ top bar with 3rd person, Quicksave, Journal and Rest. Its mouse icon hides the overlay so you can tap
-    Steam Link itself.
+  - A ≡ top bar with 3rd person, Quicksave, Journal, Rest and a keyboard.
+- **It stays out of your way:** the controls collapse to a small button whenever Morrowind isn't running on the PC
+  (or the PC can't be reached), so the rest of your phone works normally. The mouse icon on the left, or **Hide /
+  show** in the notification, collapses them by hand. **Stop** in the notification closes the overlay.
 - **A Collector's Ledger button** (gem) on the left, for the companion mod.
 - **Menus work like OpenMW for Android:** when a game menu opens, the right stick moves the cursor and Attack clicks.
   The overlay switches **automatically**, because the PC tells it when a menu is open. Extras in menus:
