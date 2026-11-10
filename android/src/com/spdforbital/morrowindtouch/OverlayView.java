@@ -95,15 +95,16 @@ public class OverlayView extends View implements Net.Listener {
         els.add(new El(ATTACK, ESSENTIAL, R.drawable.attack, null, 800, 315, 120, Net.M_LEFT));
         els.add(new El(KEY, NORMAL, R.drawable.use, null, JOY_OFF + JOY / 2 + 105, 630, SIZE, Net.K_SPACE));
         els.add(new El(KEY, NORMAL, R.drawable.jump, null, joyRightX + JOY / 2 - 105 - SIZE, 630, SIZE, Net.K_E));
-        // top bar, opened with the toggle button (same order as OpenMW-Android; keyboard/mouse slots
-        // replaced by the objective panel and Collector's Ledger, mouse icon hides the overlay)
+        // our mods, in a column on the left (mirrors the inventory button on the right)
+        els.add(new El(KEY, NORMAL, R.drawable.objectives, null, 0, 95, SIZE, Net.K_K));
+        els.add(new El(KEY, ALWAYS, R.drawable.ledger, null, 0, 180, SIZE, Net.K_L));
+        els.add(new El(KEY, NORMAL, R.drawable.compass, null, 0, 265, SIZE, Net.K_O));
+        // top bar, opened with the toggle button (same order as OpenMW-Android; the mouse icon hides the overlay)
         els.add(new El(KEY, TOPBAR, R.drawable.third_person, null, TOP, 0, SIZE, Net.K_TAB));
         els.add(new El(KEY, TOPBAR, R.drawable.save, null, TOP * 2, 0, SIZE, Net.K_F5));
         els.add(new El(KEY, TOPBAR, R.drawable.journal, null, TOP * 3, 0, SIZE, Net.K_J));
         els.add(new El(KEY, TOPBAR, R.drawable.wait, null, TOP * 4, 0, SIZE, Net.K_T));
-        els.add(new El(KEY, TOPBAR, 0, "Obj", TOP * 5, 0, SIZE, Net.K_K));
-        els.add(new El(KEY, TOPBAR, 0, "Ledger", TOP * 6, 0, SIZE, Net.K_L));
-        hideBtn = new El(HIDE, TOPBAR, R.drawable.mouse, null, TOP * 7, 0, SIZE, 0);
+        hideBtn = new El(HIDE, TOPBAR, R.drawable.mouse, null, TOP * 5, 0, SIZE, 0);
         els.add(hideBtn);
 
         for (El e : els) {

@@ -29,7 +29,7 @@ public class Net {
             LS = 9, RS = 10, UP = 11, DOWN = 12, LEFT = 13, RIGHT = 14;
     // keyboard keys
     static final int K_ESC = 0, K_ENTER = 1, K_F5 = 2, K_F9 = 3, K_J = 4, K_K = 5, K_L = 6, K_TAB = 7, K_SPACE = 8,
-            K_E = 9, K_T = 10, K_CTRL = 11, K_R = 12, K_F = 13;
+            K_E = 9, K_T = 10, K_CTRL = 11, K_R = 12, K_F = 13, K_O = 14;
     // mouse buttons share the key bitmask
     static final int M_LEFT = 20, M_RIGHT = 21;
 

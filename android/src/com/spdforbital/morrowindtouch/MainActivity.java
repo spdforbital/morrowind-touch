@@ -46,7 +46,8 @@ public class MainActivity extends Activity {
                 + "3. Press Start overlay, then switch to Steam Link and launch Morrowind.\n\n"
                 + "Controls are OpenMW for Android's: left stick walks, right stick looks (and moves the cursor in menus), "
                 + "the big Attack button clicks and can be dragged to aim. The ≡ button opens the top bar "
-                + "(view, save, journal, rest, objectives, ledger); its mouse icon hides the controls so you can use Steam Link itself.");
+                + "(view, save, journal, rest); its mouse icon hides the controls so you can use Steam Link itself. "
+                + "Left column: objective panel, Collector's Ledger, compass on/off.");
         help.setPadding(0, dp(8), 0, dp(16));
         col.addView(help);
 
