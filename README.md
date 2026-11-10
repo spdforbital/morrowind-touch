@@ -7,16 +7,15 @@ The game runs on your PC and Steam Link shows the video. Morrowind Touch draws i
 and sends them over Wi-Fi **or mobile data** to a small helper on the PC. The helper turns them into a virtual gamepad, mouse
 and keyboard.
 
-- **Gameplay layout:**
-  - A floating walk stick on the left.
-  - Swipe anywhere else to look around.
-  - Big Attack, Use, Jump, Weapon, Magic and Sneak buttons.
-  - A top row with Journal, Inventory/Map, Objectives, Ledger, Quick keys, Rest, View, Save and Menu.
-- **Menu layout:** a D-pad, A/B/X/Y, LB/RB for tabs, triggers and Menu. The overlay switches to it **automatically**
-  when a game menu opens and back when it closes. This works with OpenMW's *controller menus* option
-  (`[GUI] controller menus = true`).
-- **◐** hides the controls so you can use Steam Link itself; tap it again to bring them back. **⇄** switches
-  layouts by hand.
+- **The controls are OpenMW for Android's**, with the same layout, joystick behaviour and button images:
+  - Left stick to walk, right stick to look.
+  - A big Attack button that you can also hold and drag to aim.
+  - Use, Jump, Ready Weapon, Ready Magic, Sneak, Inventory and Pause.
+  - A ≡ top bar with 3rd person, Quicksave, Journal, Rest, plus **Obj** (objective panel) and **Ledger** (Collector's
+    Ledger). Its mouse icon hides the overlay so you can tap Steam Link itself.
+- **Menus work like OpenMW for Android:** when a game menu opens, only the right stick (which moves the cursor), Attack
+  (which clicks), Pause, Journal and Inventory stay. The overlay switches **automatically**, because the PC tells it when
+  a menu is open.
 
 ## Install
 
@@ -45,18 +44,11 @@ python3 pc/touch_helper.py          # listens on UDP 47811
 - For automatic menu switching, the game must print `[CO-UI] <mode>` lines to `openmw.log`. The
   [Comprehensive Objective Mod](https://github.com/spdforbital/comprehensive-objective-mod) does that.
 
-## Controller bindings used
+## Credits and license
 
-The defaults from OpenMW, plus a few extras:
-
-| Button | Action |
-|---|---|
-| LB | Journal |
-| B | Inventory/Map |
-| RB | Rest |
-| Back | Quick keys menu |
-| D-pad up / down | Objective panel / Collector's Ledger (Comprehensive Objective Mod) |
-| D-pad left / right | Cycle spells |
+The on-screen control layout, joystick/attack-button behaviour and button images come from
+[OpenMW-Android](https://github.com/xyzz/openmw-android) by Ilya Zhuravlev, licensed under the GNU GPL v3.
+Morrowind Touch is therefore also licensed under the **GNU GPL v3 or later** (see `LICENSE`).
 
 ## Build the APK
 

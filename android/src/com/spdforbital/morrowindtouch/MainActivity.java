@@ -44,7 +44,9 @@ public class MainActivity extends Activity {
                 + "1. On the PC, the Morrowind Touch helper must be running.\n"
                 + "2. In Steam Link, turn its own touch controls off.\n"
                 + "3. Press Start overlay, then switch to Steam Link and launch Morrowind.\n\n"
-                + "The small ◐ button in the top-left corner hides the controls so you can use Steam Link itself.");
+                + "Controls are OpenMW for Android's: left stick walks, right stick looks (and moves the cursor in menus), "
+                + "the big Attack button clicks and can be dragged to aim. The ≡ button opens the top bar "
+                + "(view, save, journal, rest, objectives, ledger); its mouse icon hides the controls so you can use Steam Link itself.");
         help.setPadding(0, dp(8), 0, dp(16));
         col.addView(help);
 

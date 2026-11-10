@@ -1,12 +1,22 @@
+/*
+    Morrowind Touch - on-screen controls over Steam Link.
+
+    The control layout, joystick behaviour, attack-button aiming and button images are taken from
+    OpenMW-Android (ui/controls/Osc.kt, Joystick*.kt, OscAttackButton.kt),
+    Copyright (C) 2018, 2019 Ilya Zhuravlev, licensed under the GNU GPL v3 or later.
+    This file is likewise distributed under the GNU GPL v3 or later.
+*/
 package com.spdforbital.morrowindtouch;
 
 import android.content.Context;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
-import android.graphics.Typeface;
+import android.graphics.Rect;
+import android.graphics.RectF;
 import android.util.SparseArray;
-import android.view.HapticFeedbackConstants;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowManager;
@@ -15,31 +25,34 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Full-screen transparent overlay with Morrowind controls, in the spirit of OpenMW for Android:
- * a floating walk stick on the left, swipe-to-look everywhere else, and big action buttons.
- * When the PC reports that a game menu is open it switches to a menu layout (D-pad + A/B/X/Y + tabs).
+ * OpenMW-Android's on-screen controls, rebuilt as an overlay that sends input to the PC.
+ * Positions are on OpenMW-Android's virtual 1024x768 screen; x scales with width, y with height,
+ * size with width, exactly like the original.
  */
 public class OverlayView extends View implements Net.Listener {
 
-    // what a control sends
-    static final int PAD = 0, KEY = 1, TRIGGER_L = 2, TRIGGER_R = 3, TOGGLE = 4, HIDE = 5, SWAP = 6;
+    static final int VW = 1024, VH = 768, SIZE = 70, JOY = 230, JOY_OFF = 110, TOP = 90;
 
-    static class Ctl {
-        final String label; final int kind, bit;
-        final float fx, fy, fr;   // position/radius as fractions of the screen height; x from the left (>=0) or right (<0)
-        final boolean fromBottom;
-        float cx, cy, r;
-        boolean on;               // toggle state
-        Ctl(String label, int kind, int bit, float fx, float fy, boolean fromBottom, float fr) {
-            this.label = label; this.kind = kind; this.bit = bit;
-            this.fx = fx; this.fy = fy; this.fromBottom = fromBottom; this.fr = fr;
+    // visibility, as in OpenMW-Android: ESSENTIAL stays in menus, NORMAL only during gameplay, ALWAYS both
+    static final int ESSENTIAL = 1, NORMAL = 2, ALWAYS = 3, TOPBAR = 4;
+
+    // element kinds
+    static final int KEY = 0, MOUSE_BTN = 1, JOY_LEFT = 2, JOY_RIGHT = 3, ATTACK = 4, TOGGLE_TOP = 5, HIDE = 6;
+
+    static class El {
+        final int kind, vis, bit, vx, vy, vsize, image;
+        final String text;
+        RectF r = new RectF();
+        El(int kind, int vis, int image, String text, int vx, int vy, int vsize, int bit) {
+            this.kind = kind; this.vis = vis; this.image = image; this.text = text;
+            this.vx = vx; this.vy = vy; this.vsize = vsize; this.bit = bit;
         }
     }
 
     static class Ptr {
-        int role;          // 0 none, 1 control, 2 stick, 3 look
-        Ctl ctl;
-        float ox, oy, lx, ly, x, y;
+        El el;
+        float ix, iy, x, y, lx, ly;
+        long down;
     }
 
     private final Net net;
@@ -47,82 +60,76 @@ public class OverlayView extends View implements Net.Listener {
     private WindowManager wm;
     private WindowManager.LayoutParams lp;
 
-    private final List<Ctl> game = new ArrayList<>(), menu = new ArrayList<>();
-    private List<Ctl> current = game;
+    private final List<El> els = new ArrayList<>();
+    private final SparseArray<Bitmap> bitmaps = new SparseArray<>();
     private final SparseArray<Ptr> ptrs = new SparseArray<>();
-    private boolean hidden, linkOk, badPassword, menuForced, menuAuto;
-    private String mode = "none";
-    private Ctl sneak;
+    private boolean hidden, topVisible, inMenu, linkOk, badPassword;
+    private final El hideBtn;
 
-    private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG), ring = new Paint(Paint.ANTI_ALIAS_FLAG),
-            text = new Paint(Paint.ANTI_ALIAS_FLAG), dot = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint img = new Paint(Paint.FILTER_BITMAP_FLAG), stroke = new Paint(Paint.ANTI_ALIAS_FLAG),
+            label = new Paint(Paint.ANTI_ALIAS_FLAG), box = new Paint(Paint.ANTI_ALIAS_FLAG);
 
     OverlayView(Context c, Net net, float lookSpeed) {
         super(c);
         this.net = net;
         this.lookSpeed = lookSpeed;
-        ring.setStyle(Paint.Style.STROKE);
-        ring.setStrokeWidth(3 * getResources().getDisplayMetrics().density);
-        text.setColor(Color.WHITE);
-        text.setTextAlign(Paint.Align.CENTER);
-        text.setTypeface(Typeface.create(Typeface.SERIF, Typeface.BOLD));
-        text.setShadowLayer(4, 0, 0, Color.BLACK);
-        buildLayouts();
-    }
+        img.setAlpha(Math.round(0.4f * 255));
+        stroke.setStyle(Paint.Style.STROKE);
+        stroke.setColor(Color.GRAY);
+        stroke.setStrokeWidth(2 * getResources().getDisplayMetrics().density);
+        label.setColor(Color.WHITE);
+        label.setAlpha(Math.round(0.6f * 255));
+        label.setTextAlign(Paint.Align.CENTER);
+        label.setFakeBoldText(true);
+        box.setColor(Color.argb(Math.round(0.4f * 255), 60, 60, 60));
 
-    // ---- layouts --------------------------------------------------------------------------------
-    private void buildLayouts() {
-        // gameplay: right-hand action cluster (x < 0 = measured from the right edge, fromBottom = y from the bottom)
-        game.add(new Ctl("Attack", TRIGGER_R, 0, -0.17f, 0.20f, true, 0.135f));
-        game.add(new Ctl("Use", PAD, Net.A, -0.47f, 0.14f, true, 0.095f));
-        game.add(new Ctl("Jump", TRIGGER_L, 0, -0.14f, 0.50f, true, 0.085f));
-        game.add(new Ctl("Weapon", PAD, Net.X, -0.42f, 0.42f, true, 0.072f));
-        game.add(new Ctl("Magic", PAD, Net.Y, -0.70f, 0.13f, true, 0.072f));
-        sneak = new Ctl("Sneak", TOGGLE, Net.LS, -0.35f, 0.68f, true, 0.065f);
-        game.add(sneak);
-        // top row
-        String[] names = {"Journal", "Inventory\nMap", "Objectives", "Ledger", "Quick\nkeys", "Rest", "View", "Save", "Menu"};
-        int[] kinds = {PAD, PAD, PAD, PAD, PAD, PAD, PAD, KEY, PAD};
-        int[] bits = {Net.LB, Net.B, Net.UP, Net.DOWN, Net.BACK, Net.RB, Net.RS, Net.K_F5, Net.START};
-        for (int i = 0; i < names.length; i++) {
-            game.add(new Ctl(names[i], kinds[i], bits[i], -(0.09f + 0.165f * (names.length - 1 - i)), 0.085f, false, 0.072f));
-        }
-        game.add(new Ctl("◐", HIDE, 0, 0.06f, 0.06f, false, 0.05f));
-        game.add(new Ctl("⇄", SWAP, 0, 0.17f, 0.06f, false, 0.05f));
+        int joyRightX = VW - JOY - JOY_OFF;
+        els.add(new El(JOY_LEFT, NORMAL, 0, null, JOY_OFF, 400, JOY, 0));
+        els.add(new El(JOY_RIGHT, ESSENTIAL, 0, null, joyRightX, 400, JOY, 0));
+        els.add(new El(TOGGLE_TOP, ALWAYS, R.drawable.toggle, null, 0, 0, SIZE, 0));
+        els.add(new El(MOUSE_BTN, ALWAYS, R.drawable.inventory, null, 940, 95, SIZE, Net.M_RIGHT));
+        els.add(new El(KEY, NORMAL, R.drawable.sneak, null, 940 - TOP, 0, SIZE, Net.K_CTRL));
+        els.add(new El(KEY, ESSENTIAL, R.drawable.pause, null, 940, 0, SIZE, Net.K_ESC));
+        els.add(new El(KEY, NORMAL, R.drawable.toggle_magic, null, 940, 450, SIZE, Net.K_R));
+        els.add(new El(KEY, NORMAL, R.drawable.toggle_weapon, null, 940, 560, SIZE, Net.K_F));
+        els.add(new El(ATTACK, ESSENTIAL, R.drawable.attack, null, 800, 315, 120, Net.M_LEFT));
+        els.add(new El(KEY, NORMAL, R.drawable.use, null, JOY_OFF + JOY / 2 + 105, 630, SIZE, Net.K_SPACE));
+        els.add(new El(KEY, NORMAL, R.drawable.jump, null, joyRightX + JOY / 2 - 105 - SIZE, 630, SIZE, Net.K_E));
+        // top bar, opened with the toggle button (same order as OpenMW-Android; keyboard/mouse slots
+        // replaced by the objective panel and Collector's Ledger, mouse icon hides the overlay)
+        els.add(new El(KEY, TOPBAR, R.drawable.third_person, null, TOP, 0, SIZE, Net.K_TAB));
+        els.add(new El(KEY, TOPBAR, R.drawable.save, null, TOP * 2, 0, SIZE, Net.K_F5));
+        els.add(new El(KEY, TOPBAR, R.drawable.journal, null, TOP * 3, 0, SIZE, Net.K_J));
+        els.add(new El(KEY, TOPBAR, R.drawable.wait, null, TOP * 4, 0, SIZE, Net.K_T));
+        els.add(new El(KEY, TOPBAR, 0, "Obj", TOP * 5, 0, SIZE, Net.K_K));
+        els.add(new El(KEY, TOPBAR, 0, "Ledger", TOP * 6, 0, SIZE, Net.K_L));
+        hideBtn = new El(HIDE, TOPBAR, R.drawable.mouse, null, TOP * 7, 0, SIZE, 0);
+        els.add(hideBtn);
 
-        // menus: D-pad left, face buttons right, tabs/triggers on top
-        float dx = 0.33f, dy = 0.36f, s = 0.17f;
-        menu.add(new Ctl("▲", PAD, Net.UP, dx, dy + s, true, 0.085f));
-        menu.add(new Ctl("▼", PAD, Net.DOWN, dx, dy - s, true, 0.085f));
-        menu.add(new Ctl("◀", PAD, Net.LEFT, dx - s, dy, true, 0.085f));
-        menu.add(new Ctl("▶", PAD, Net.RIGHT, dx + s, dy, true, 0.085f));
-        float fx = -0.36f;
-        menu.add(new Ctl("A\nSelect", PAD, Net.A, fx, dy - s, true, 0.085f));
-        menu.add(new Ctl("B\nBack", PAD, Net.B, fx + s, dy, true, 0.085f));
-        menu.add(new Ctl("X", PAD, Net.X, fx - s, dy, true, 0.075f));
-        menu.add(new Ctl("Y", PAD, Net.Y, fx, dy + s, true, 0.075f));
-        menu.add(new Ctl("LB ◀", PAD, Net.LB, 0.40f, 0.10f, false, 0.075f));
-        menu.add(new Ctl("LT", TRIGGER_L, 0, 0.60f, 0.10f, false, 0.06f));
-        menu.add(new Ctl("RT", TRIGGER_R, 0, -0.60f, 0.10f, false, 0.06f));
-        menu.add(new Ctl("▶ RB", PAD, Net.RB, -0.40f, 0.10f, false, 0.075f));
-        menu.add(new Ctl("Menu", PAD, Net.START, -0.12f, 0.10f, false, 0.06f));
-        menu.add(new Ctl("◐", HIDE, 0, 0.06f, 0.06f, false, 0.05f));
-        menu.add(new Ctl("⇄", SWAP, 0, 0.17f, 0.06f, false, 0.05f));
-    }
-
-    private void place(int w, int h) {
-        for (List<Ctl> l : new List[]{game, menu}) {
-            for (Ctl c : l) {
-                c.r = c.fr * h;
-                c.cx = c.fx >= 0 ? c.fx * h : w + c.fx * h;
-                c.cy = c.fromBottom ? h - c.fy * h : c.fy * h;
+        for (El e : els) {
+            if (e.image != 0 && bitmaps.get(e.image) == null) {
+                bitmaps.put(e.image, BitmapFactory.decodeResource(getResources(), e.image));
             }
+        }
+    }
+
+    private boolean visible(El e) {
+        if (e.vis == TOPBAR) return topVisible;
+        if (e.vis == ALWAYS) return true;
+        if (inMenu) return e.vis == ESSENTIAL;
+        return true;
+    }
+
+    private void layoutEls(int w, int h) {
+        for (El e : els) {
+            float x = (float) e.vx * w / VW, y = (float) e.vy * h / VH, s = (float) e.vsize * w / VW;
+            e.r.set(x, y, x + s, y + s);
         }
     }
 
     @Override
     protected void onSizeChanged(int w, int h, int ow, int oh) {
-        if (!hidden) place(w, h);
+        if (!hidden) layoutEls(w, h);
     }
 
     // ---- window ---------------------------------------------------------------------------------
@@ -150,12 +157,11 @@ public class OverlayView extends View implements Net.Listener {
     @Override
     public void onMode(String m) {
         post(() -> {
-            mode = m;
-            boolean inMenu = !(m.equals("none") || m.startsWith("Loading"));
-            if (inMenu != menuAuto) {
-                menuAuto = inMenu;
-                menuForced = false;
-                switchTo(inMenu ? menu : game);
+            boolean menu = !(m.equals("none") || m.startsWith("Loading"));
+            if (menu != inMenu) {
+                inMenu = menu;
+                releaseAll();
+                invalidate();
             }
         });
     }
@@ -170,28 +176,19 @@ public class OverlayView extends View implements Net.Listener {
         post(() -> { badPassword = true; invalidate(); });
     }
 
-    private void switchTo(List<Ctl> l) {
-        if (current == l) return;
-        releaseAll();
-        current = l;
-        invalidate();
-    }
-
     // ---- touch ----------------------------------------------------------------------------------
-    private Ctl hit(float x, float y) {
-        Ctl best = null;
-        float bestD = Float.MAX_VALUE;
-        for (Ctl c : current) {
-            float d = (float) Math.hypot(x - c.cx, y - c.cy);
-            if (d <= c.r * 1.2f && d < bestD) { best = c; bestD = d; }
+    private El hit(float x, float y) {
+        for (int i = els.size() - 1; i >= 0; i--) {     // later elements are on top
+            El e = els.get(i);
+            if (visible(e) && e.r.contains(x, y)) return e;
         }
-        return best;
+        return null;
     }
 
     @Override
-    public boolean onTouchEvent(MotionEvent e) {
-        int a = e.getActionMasked();
-        int idx = e.getActionIndex();
+    public boolean onTouchEvent(MotionEvent ev) {
+        int a = ev.getActionMasked();
+        int idx = ev.getActionIndex();
         if (hidden) {
             if (a == MotionEvent.ACTION_UP) setHidden(false);
             return true;
@@ -199,45 +196,50 @@ public class OverlayView extends View implements Net.Listener {
         switch (a) {
             case MotionEvent.ACTION_DOWN:
             case MotionEvent.ACTION_POINTER_DOWN: {
-                float x = e.getX(idx), y = e.getY(idx);
-                Ptr p = new Ptr();
-                p.x = p.lx = p.ox = x;
-                p.y = p.ly = p.oy = y;
-                Ctl c = hit(x, y);
-                if (c != null) {
-                    if (c.kind == HIDE) { setHidden(true); return true; }
-                    if (c.kind == SWAP) {
-                        menuForced = true;
-                        switchTo(current == game ? menu : game);
-                        return true;
-                    }
-                    if (c.kind == TOGGLE) c.on = !c.on;
-                    p.role = 1;
-                    p.ctl = c;
-                    performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
-                } else if (current == game) {
-                    p.role = (x < getWidth() * 0.40f && y > getHeight() * 0.28f) ? 2 : 3;
+                float x = ev.getX(idx), y = ev.getY(idx);
+                El e = hit(x, y);
+                if (e == null) break;
+                if (e.kind == TOGGLE_TOP || e.kind == HIDE) {
+                    Ptr p = new Ptr();         // act on release, like OpenMW-Android's custom buttons
+                    p.el = e;
+                    ptrs.put(ev.getPointerId(idx), p);
+                    break;
                 }
-                ptrs.put(e.getPointerId(idx), p);
+                Ptr p = new Ptr();
+                p.el = e;
+                p.ix = p.x = p.lx = x;
+                p.iy = p.y = p.ly = y;
+                p.down = System.currentTimeMillis();
+                ptrs.put(ev.getPointerId(idx), p);
                 break;
             }
             case MotionEvent.ACTION_MOVE:
-                for (int i = 0; i < e.getPointerCount(); i++) {
-                    Ptr p = ptrs.get(e.getPointerId(i));
-                    if (p == null) continue;
-                    p.x = e.getX(i);
-                    p.y = e.getY(i);
-                    if (p.role == 3) {
-                        net.addMouse((p.x - p.lx) * lookSpeed, (p.y - p.ly) * lookSpeed);
+                for (int i = 0; i < ev.getPointerCount(); i++) {
+                    Ptr p = ptrs.get(ev.getPointerId(i));
+                    if (p == null || p.el == null) continue;
+                    float nx = ev.getX(i), ny = ev.getY(i);
+                    float size = p.el.r.width();
+                    if (p.el.kind == JOY_RIGHT && size > 0) {
+                        // OpenMW-Android: mouseScalingFactor 900 over the stick's size
+                        net.addMouse((nx - p.lx) * 900f / size * lookSpeed, (ny - p.ly) * 900f / size * lookSpeed);
+                    } else if (p.el.kind == ATTACK && size > 0 && System.currentTimeMillis() - p.down > 100) {
+                        // hold attack for 100 ms, then dragging aims (factor 400)
+                        net.addMouse((nx - p.lx) * 400f / size * lookSpeed, (ny - p.ly) * 400f / size * lookSpeed);
                     }
-                    p.lx = p.x;
-                    p.ly = p.y;
+                    p.x = p.lx = nx;
+                    p.y = p.ly = ny;
                 }
                 break;
             case MotionEvent.ACTION_UP:
-            case MotionEvent.ACTION_POINTER_UP:
-                ptrs.remove(e.getPointerId(idx));
+            case MotionEvent.ACTION_POINTER_UP: {
+                Ptr p = ptrs.get(ev.getPointerId(idx));
+                ptrs.remove(ev.getPointerId(idx));
+                if (p != null && p.el != null) {
+                    if (p.el.kind == TOGGLE_TOP) topVisible = !topVisible;
+                    else if (p.el.kind == HIDE) { setHidden(true); return true; }
+                }
                 break;
+            }
             case MotionEvent.ACTION_CANCEL:
                 ptrs.clear();
                 break;
@@ -252,83 +254,78 @@ public class OverlayView extends View implements Net.Listener {
         pushState();
     }
 
-    /** Recompute what is held from the active fingers and hand it to the network thread. */
     private void pushState() {
-        int buttons = 0, keys = 0;
-        float lt = 0, rt = 0, lx = 0, ly = 0;
-        float stickR = getHeight() * 0.14f;
+        int keys = 0;
+        float lx = 0, ly = 0;
         for (int i = 0; i < ptrs.size(); i++) {
             Ptr p = ptrs.valueAt(i);
-            if (p.role == 1 && p.ctl != null) {
-                Ctl c = p.ctl;
-                if (c.kind == PAD) buttons |= 1 << c.bit;
-                else if (c.kind == KEY) keys |= 1 << c.bit;
-                else if (c.kind == TRIGGER_L) lt = 1;
-                else if (c.kind == TRIGGER_R) rt = 1;
-            } else if (p.role == 2 && stickR > 0) {
-                float dx = (p.x - p.ox) / stickR, dy = (p.y - p.oy) / stickR;
-                float m = (float) Math.hypot(dx, dy);
-                if (m > 1) { dx /= m; dy /= m; }
-                lx = dx;
-                ly = dy;
+            if (p.el == null) continue;
+            switch (p.el.kind) {
+                case KEY:
+                case MOUSE_BTN:
+                case ATTACK:
+                    keys |= 1 << p.el.bit;
+                    break;
+                case JOY_LEFT: {
+                    // OpenMW-Android JoystickLeft: width/3 for full tilt, axis bias, small dead-zone kick
+                    float w = p.el.r.width() / 3f;
+                    float dx = p.x - p.ix, dy = p.y - p.iy, bias = 0.3f;
+                    if (Math.abs(dx) > Math.abs(dy)) {
+                        dy = Math.signum(dy) * Math.max(0f, Math.abs(dy) - bias * Math.abs(dx));
+                    } else {
+                        dx = Math.signum(dx) * Math.max(0f, Math.abs(dx) - bias * Math.abs(dy));
+                    }
+                    lx = clamp(dx / w + 0.2f * Math.signum(dx));
+                    ly = clamp(dy / w + 0.2f * Math.signum(dy));
+                    break;
+                }
+                default:
+                    break;
             }
         }
-        if (current == game && sneak.on) buttons |= 1 << Net.LS;
-        net.lx = lx; net.ly = ly; net.lt = lt; net.rt = rt;
-        net.buttons = buttons;
+        net.lx = lx;
+        net.ly = ly;
         net.keys = keys;
+        net.buttons = 0;
     }
+
+    private static float clamp(float v) { return Math.max(-1f, Math.min(1f, v)); }
 
     // ---- drawing --------------------------------------------------------------------------------
     @Override
     protected void onDraw(Canvas cv) {
         if (hidden) {
-            float s = getWidth();
-            drawButton(cv, s / 2, s / 2, s * 0.42f, "◐", false, s * 0.35f);
+            Bitmap b = bitmaps.get(R.drawable.mouse);
+            cv.drawBitmap(b, null, new RectF(0, 0, getWidth(), getHeight()), img);
             return;
         }
-        float h = getHeight();
-        for (Ctl c : current) {
-            boolean held = c.kind == TOGGLE ? c.on : isHeld(c);
-            drawButton(cv, c.cx, c.cy, c.r, c.label, held, c.r * (c.label.length() > 7 ? 0.30f : 0.40f));
+        for (El e : els) {
+            if (!visible(e)) continue;
+            if (e.kind == JOY_LEFT || e.kind == JOY_RIGHT) {
+                drawJoystick(cv, e);
+            } else if (e.image != 0) {
+                cv.drawBitmap(bitmaps.get(e.image), null, e.r, img);
+            } else {
+                cv.drawRoundRect(e.r, e.r.width() * 0.15f, e.r.width() * 0.15f, box);
+                label.setTextSize(e.r.width() * (e.text.length() > 3 ? 0.24f : 0.32f));
+                cv.drawText(e.text, e.r.centerX(), e.r.centerY() + label.getTextSize() * 0.35f, label);
+            }
         }
-        // walk stick
-        for (int i = 0; i < ptrs.size(); i++) {
-            Ptr p = ptrs.valueAt(i);
-            if (p.role != 2) continue;
-            float R = h * 0.14f;
-            fill.setColor(Color.argb(60, 0, 0, 0));
-            cv.drawCircle(p.ox, p.oy, R, fill);
-            ring.setColor(Color.argb(140, 255, 255, 255));
-            cv.drawCircle(p.ox, p.oy, R, ring);
-            float dx = p.x - p.ox, dy = p.y - p.oy, m = (float) Math.hypot(dx, dy);
-            if (m > R) { dx *= R / m; dy *= R / m; }
-            fill.setColor(Color.argb(150, 222, 184, 107));
-            cv.drawCircle(p.ox + dx, p.oy + dy, R * 0.42f, fill);
+        if (!linkOk) {
+            label.setTextSize(getHeight() * 0.035f);
+            cv.drawText(badPassword ? "wrong password" : "no PC", getWidth() / 2f, getHeight() * 0.05f, label);
         }
-        // link status next to the swap button
-        dot.setColor(linkOk ? Color.rgb(90, 200, 90) : Color.rgb(220, 70, 60));
-        cv.drawCircle(h * 0.25f, h * 0.06f, h * 0.012f, dot);
-        text.setTextSize(h * 0.028f);
-        text.setTextAlign(Paint.Align.LEFT);
-        cv.drawText(linkOk ? "PC" : (badPassword ? "wrong password" : "no PC"), h * 0.27f, h * 0.07f, text);
-        text.setTextAlign(Paint.Align.CENTER);
     }
 
-    private boolean isHeld(Ctl c) {
-        for (int i = 0; i < ptrs.size(); i++) if (ptrs.valueAt(i).ctl == c) return true;
-        return false;
-    }
-
-    private void drawButton(Canvas cv, float x, float y, float r, String label, boolean held, float ts) {
-        fill.setColor(held ? Color.argb(150, 222, 184, 107) : Color.argb(70, 0, 0, 0));
-        cv.drawCircle(x, y, r, fill);
-        ring.setColor(held ? Color.argb(230, 255, 230, 170) : Color.argb(150, 230, 215, 180));
-        cv.drawCircle(x, y, r, ring);
-        text.setTextSize(ts);
-        String[] lines = label.split("\n");
-        float lh = ts * 1.1f;
-        float y0 = y - (lines.length - 1) * lh / 2 + ts * 0.35f;
-        for (int i = 0; i < lines.length; i++) cv.drawText(lines[i], x, y0 + i * lh, text);
+    private void drawJoystick(Canvas cv, El e) {
+        Ptr p = null;
+        for (int i = 0; i < ptrs.size(); i++) if (ptrs.valueAt(i).el == e) p = ptrs.valueAt(i);
+        float w = e.r.width();
+        if (p != null) {
+            cv.drawCircle(p.ix, p.iy, w / 10f, stroke);
+            cv.drawCircle(p.x, p.y, w / 5f, stroke);
+        } else {
+            cv.drawCircle(e.r.centerX(), e.r.centerY(), w / 2f - stroke.getStrokeWidth(), stroke);
+        }
     }
 }

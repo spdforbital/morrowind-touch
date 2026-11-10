@@ -30,8 +30,9 @@ BTN_LEFT, BTN_RIGHT = 0x110, 0x111
 # phone button bit -> evdev code (D-pad bits 11-14 go to the hat instead)
 PAD_BUTTONS = [0x130, 0x131, 0x133, 0x134, 0x136, 0x137, 0x13a, 0x13b, 0x13c, 0x13d, 0x13e]
 #               A      B      X      Y      LB     RB     Back   Start  Guide  LS     RS
-KEYS = [1, 28, 63, 67, 36, 37, 38, 15, 57]
-#       Esc Enter F5 F9  J   K   L   Tab Space
+KEYS = [1, 28, 63, 67, 36, 37, 38, 15, 57, 18, 20, 29, 19, 33]
+#       Esc Enter F5 F9  J   K   L   Tab Space E  T  LCtrl R  F
+MOUSE_LEFT_BIT, MOUSE_RIGHT_BIT = 20, 21   # mouse buttons ride in the same bitmask
 
 
 class Device:
@@ -98,9 +99,13 @@ class Devices:
         p.set(EV_ABS, ABS_HAT0X, right - left)
         p.set(EV_ABS, ABS_HAT0Y, down - up)
         p.sync()
+        changed = self.mouse.set(EV_KEY, BTN_LEFT, keys >> MOUSE_LEFT_BIT & 1)
+        changed = self.mouse.set(EV_KEY, BTN_RIGHT, keys >> MOUSE_RIGHT_BIT & 1) or changed
         if mdx or mdy:
             self.mouse.emit(EV_REL, REL_X, mdx)
             self.mouse.emit(EV_REL, REL_Y, mdy)
+            changed = True
+        if changed:
             self.mouse.sync()
         for bit, code in enumerate(KEYS):
             self.kbd.set(EV_KEY, code, 1 if keys >> bit & 1 else 0)
