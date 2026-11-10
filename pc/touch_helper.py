@@ -30,9 +30,23 @@ BTN_LEFT, BTN_RIGHT = 0x110, 0x111
 # phone button bit -> evdev code (D-pad bits 11-14 go to the hat instead)
 PAD_BUTTONS = [0x130, 0x131, 0x133, 0x134, 0x136, 0x137, 0x13a, 0x13b, 0x13c, 0x13d, 0x13e]
 #               A      B      X      Y      LB     RB     Back   Start  Guide  LS     RS
-KEYS = [1, 28, 63, 67, 36, 37, 38, 15, 57, 18, 20, 29, 19, 33, 24]
-#       Esc Enter F5 F9  J   K   L   Tab Space E  T  LCtrl R  F   O
+KEYS = [1, 28, 63, 67, 36, 37, 38, 15, 57, 18, 20, 29, 19, 33, 24, 42, 14]
+#       Esc Enter F5 F9  J   K   L   Tab Space E  T  LCtrl R  F   O  LShift Backspace
+
+# typing (US layout): char -> (evdev key, needs shift)
+_ROWS = {'1234567890-=': [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13], '!@#$%^&*()_+': [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+         'qwertyuiop[]': list(range(16, 28)), 'QWERTYUIOP{}': list(range(16, 28)),
+         "asdfghjkl;'`": list(range(30, 42)), 'ASDFGHJKL:"~': list(range(30, 42)),
+         '\\zxcvbnm,./': [43] + list(range(44, 54)), '|ZXCVBNM<>?': [43] + list(range(44, 54))}
+CHARMAP = {' ': (57, False), '\n': (28, False), '\b': (14, False)}
+for chars, codes in _ROWS.items():
+    shifted = chars[0] in '!QA|'
+    for ch, code in zip(chars, codes):
+        CHARMAP[ch] = (code, shifted)
+TYPE_KEYS = sorted({c for c, _ in CHARMAP.values()} | set(KEYS))
 MOUSE_LEFT_BIT, MOUSE_RIGHT_BIT = 20, 21   # mouse buttons ride in the same bitmask
+WHEEL_UP_BIT, WHEEL_DOWN_BIT = 22, 23       # held = scroll one notch now and then every WHEEL_REPEAT s
+WHEEL_REPEAT = 0.12
 
 
 class Device:
@@ -85,7 +99,7 @@ class Devices:
             ABS_Z: (0, 255), ABS_RZ: (0, 255), ABS_HAT0X: (-1, 1), ABS_HAT0Y: (-1, 1)})
         self.mouse = Device('Morrowind Touch Mouse', keys=(BTN_LEFT, BTN_RIGHT), rels=(REL_X, REL_Y, REL_WHEEL),
                             product=0x4d58)
-        self.kbd = Device('Morrowind Touch Keyboard', keys=KEYS, product=0x4d59)
+        self.kbd = Device('Morrowind Touch Keyboard', keys=TYPE_KEYS, product=0x4d59)
 
     def apply(self, lx, ly, rx, ry, lt, rt, buttons, mdx, mdy, keys):
         p, S = self.pad, 32767
@@ -101,6 +115,13 @@ class Devices:
         p.sync()
         changed = self.mouse.set(EV_KEY, BTN_LEFT, keys >> MOUSE_LEFT_BIT & 1)
         changed = self.mouse.set(EV_KEY, BTN_RIGHT, keys >> MOUSE_RIGHT_BIT & 1) or changed
+        wheel = (keys >> WHEEL_UP_BIT & 1) - (keys >> WHEEL_DOWN_BIT & 1)
+        now = time.monotonic()
+        if wheel and (wheel != getattr(self, 'wheelDir', 0) or now - getattr(self, 'wheelAt', 0) >= WHEEL_REPEAT):
+            self.mouse.emit(EV_REL, REL_WHEEL, wheel)
+            self.wheelAt = now
+            changed = True
+        self.wheelDir = wheel
         if mdx or mdy:
             self.mouse.emit(EV_REL, REL_X, mdx)
             self.mouse.emit(EV_REL, REL_Y, mdy)
@@ -110,6 +131,20 @@ class Devices:
         for bit, code in enumerate(KEYS):
             self.kbd.set(EV_KEY, code, 1 if keys >> bit & 1 else 0)
         self.kbd.sync()
+
+    def type_text(self, text):
+        k = self.kbd
+        for ch in text:
+            code, shift = CHARMAP.get(ch, (None, False))
+            if code is None:
+                continue
+            if shift: k.emit(EV_KEY, 42, 1)
+            k.emit(EV_KEY, code, 1); k.sync()
+            time.sleep(0.008)
+            k.emit(EV_KEY, code, 0)
+            if shift: k.emit(EV_KEY, 42, 0)
+            k.sync()
+            time.sleep(0.008)
 
     def release(self):
         self.apply(0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
@@ -188,12 +223,29 @@ def main():
             text = data.decode('ascii', 'replace')
             body, _, mac = text.rpartition(' ')
             parts = body.split()
-            if len(parts) != 14 or parts[0] != 'MWT2':
+            if not parts or parts[0] not in ('MWT2', 'MWT2X') or (parts[0] == 'MWT2' and len(parts) != 14) \
+                    or (parts[0] == 'MWT2X' and len(parts) != 5):
                 continue
             if not hmac.compare_digest(sign(key, body), mac):
                 if now - lastBad > 1.0:                         # tell the app the password is wrong (rate-limited)
                     lastBad = now
                     sock.sendto(b'MWT2 badauth', addr)
+                continue
+            if parts[0] == 'MWT2X':                                 # typed text from the phone keyboard
+                try:
+                    sess, ts, seq = parts[1], int(parts[2]), int(parts[3])
+                    text = bytes.fromhex(parts[4]).decode('utf-8')
+                except ValueError:
+                    continue
+                if abs(ts - time.time() * 1000) > MAX_CLOCK_SKEW_MS or (sess == session and seq <= lastSeq):
+                    continue
+                if sess != session:
+                    session = sess
+                lastSeq = seq
+                if devs is None:
+                    devs = Devices()
+                devs.type_text(text)
+                last = now
                 continue
             try:
                 sess, ts, seq = parts[1], int(parts[2]), int(parts[3])

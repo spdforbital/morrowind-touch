@@ -34,15 +34,17 @@ public class OverlayView extends View implements Net.Listener {
     static final int VW = 1024, VH = 768, SIZE = 70, JOY = 230, JOY_OFF = 110, TOP = 90;
 
     // visibility, as in OpenMW-Android: ESSENTIAL stays in menus, NORMAL only during gameplay, ALWAYS both
-    static final int ESSENTIAL = 1, NORMAL = 2, ALWAYS = 3, TOPBAR = 4;
+    static final int ESSENTIAL = 1, NORMAL = 2, ALWAYS = 3, TOPBAR = 4, MENU_ONLY = 5;
 
     // element kinds
-    static final int KEY = 0, MOUSE_BTN = 1, JOY_LEFT = 2, JOY_RIGHT = 3, ATTACK = 4, TOGGLE_TOP = 5, HIDE = 6;
+    static final int KEY = 0, MOUSE_BTN = 1, JOY_LEFT = 2, JOY_RIGHT = 3, ATTACK = 4, TOGGLE_TOP = 5, HIDE = 6,
+            LATCH = 7, KEYBOARD = 8;
 
     static class El {
         final int kind, vis, bit, vx, vy, vsize, image;
         final String text;
         RectF r = new RectF();
+        boolean latched;   // LATCH buttons: tap on, tap off
         El(int kind, int vis, int image, String text, int vx, int vy, int vsize, int bit) {
             this.kind = kind; this.vis = vis; this.image = image; this.text = text;
             this.vx = vx; this.vy = vy; this.vsize = vsize; this.bit = bit;
@@ -52,7 +54,7 @@ public class OverlayView extends View implements Net.Listener {
     static class Ptr {
         El el;
         float ix, iy, x, y, lx, ly;
-        long down;
+        long down, down2;
     }
 
     private final Net net;
@@ -95,6 +97,13 @@ public class OverlayView extends View implements Net.Listener {
         els.add(new El(ATTACK, ESSENTIAL, R.drawable.attack, null, 800, 315, 120, Net.M_LEFT));
         els.add(new El(KEY, NORMAL, R.drawable.use, null, JOY_OFF + JOY / 2 + 105, 630, SIZE, Net.K_SPACE));
         els.add(new El(KEY, NORMAL, R.drawable.jump, null, joyRightX + JOY / 2 - 105 - SIZE, 630, SIZE, Net.K_E));
+        // menus only: scroll lists and OK, where the walk stick sits during play
+        els.add(new El(KEY, MENU_ONLY, R.drawable.scroll_up, null, JOY_OFF + 30, 380, 90, Net.WHEEL_UP));
+        els.add(new El(KEY, MENU_ONLY, R.drawable.scroll_down, null, JOY_OFF + 30, 560, 90, Net.WHEEL_DOWN));
+        els.add(new El(KEY, MENU_ONLY, R.drawable.ok, null, JOY_OFF + 160, 470, SIZE, Net.K_ENTER));
+        // menus only: Grab (tap = pick up / hold the click, tap again = drop) and Shift (latched) for dragging stacks
+        els.add(new El(LATCH, MENU_ONLY, R.drawable.grab, null, 940, 450, SIZE, Net.M_LEFT));
+        els.add(new El(LATCH, MENU_ONLY, R.drawable.shift, null, 940, 560, SIZE, Net.K_SHIFT));
         // Collector's Ledger, on the left (mirrors the inventory button on the right)
         els.add(new El(KEY, ALWAYS, R.drawable.ledger, null, 0, 95, SIZE, Net.K_L));
         // top bar, opened with the toggle button (same order as OpenMW-Android; the mouse icon hides the overlay)
@@ -102,7 +111,8 @@ public class OverlayView extends View implements Net.Listener {
         els.add(new El(KEY, TOPBAR, R.drawable.save, null, TOP * 2, 0, SIZE, Net.K_F5));
         els.add(new El(KEY, TOPBAR, R.drawable.journal, null, TOP * 3, 0, SIZE, Net.K_J));
         els.add(new El(KEY, TOPBAR, R.drawable.wait, null, TOP * 4, 0, SIZE, Net.K_T));
-        hideBtn = new El(HIDE, TOPBAR, R.drawable.mouse, null, TOP * 5, 0, SIZE, 0);
+        els.add(new El(KEYBOARD, TOPBAR, R.drawable.keyboard, null, TOP * 5, 0, SIZE, 0));
+        hideBtn = new El(HIDE, TOPBAR, R.drawable.mouse, null, TOP * 6, 0, SIZE, 0);
         els.add(hideBtn);
 
         for (El e : els) {
@@ -115,6 +125,7 @@ public class OverlayView extends View implements Net.Listener {
     private boolean visible(El e) {
         if (e.vis == TOPBAR) return topVisible;
         if (e.vis == ALWAYS) return true;
+        if (e.vis == MENU_ONLY) return inMenu;
         if (inMenu) return e.vis == ESSENTIAL;
         return true;
     }
@@ -139,6 +150,7 @@ public class OverlayView extends View implements Net.Listener {
     }
 
     void detach() {
+        closeKeyboard();
         try { wm.removeView(this); } catch (Exception ignored) {}
     }
 
@@ -152,6 +164,74 @@ public class OverlayView extends View implements Net.Listener {
         invalidate();
     }
 
+    // ---- phone keyboard -> typing on the PC ------------------------------------------------------
+    private android.widget.EditText kbField;
+
+    private void openKeyboard() {
+        if (kbField != null) return;
+        final android.widget.EditText f = new android.widget.EditText(getContext());
+        f.setSingleLine(true);
+        f.setHint("Type here - Enter sends, back closes");
+        f.setBackgroundColor(Color.argb(220, 30, 30, 30));
+        f.setTextColor(Color.WHITE);
+        f.setHintTextColor(Color.GRAY);
+        f.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_DONE
+                | android.view.inputmethod.EditorInfo.IME_FLAG_NO_EXTRACT_UI);
+        f.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+                | android.text.InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD);
+        final String[] prev = {""};
+        f.addTextChangedListener(new android.text.TextWatcher() {
+            public void beforeTextChanged(CharSequence c, int a, int b, int d) {}
+            public void onTextChanged(CharSequence c, int a, int b, int d) {}
+            public void afterTextChanged(android.text.Editable ed) {
+                String now = ed.toString(), old = prev[0];
+                int common = 0;
+                while (common < now.length() && common < old.length() && now.charAt(common) == old.charAt(common)) common++;
+                StringBuilder out = new StringBuilder();
+                for (int i = common; i < old.length(); i++) out.append('\b');
+                out.append(now.substring(common));
+                net.sendText(out.toString());
+                prev[0] = now;
+            }
+        });
+        f.setOnEditorActionListener((v, actionId, event) -> {
+            net.sendText("\n");
+            closeKeyboard();
+            return true;
+        });
+        f.setOnKeyListener((v, keyCode, event) -> {
+            if (keyCode == android.view.KeyEvent.KEYCODE_BACK && event.getAction() == android.view.KeyEvent.ACTION_UP) {
+                closeKeyboard();
+                return true;
+            }
+            if (keyCode == android.view.KeyEvent.KEYCODE_DEL && event.getAction() == android.view.KeyEvent.ACTION_DOWN
+                    && f.getText().length() == 0) {
+                net.sendText("\b");          // backspace into text that was already in the game
+                return true;
+            }
+            return false;
+        });
+        WindowManager.LayoutParams kp = new WindowManager.LayoutParams(
+                WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, 0, android.graphics.PixelFormat.TRANSLUCENT);
+        kp.gravity = android.view.Gravity.TOP;
+        kp.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE;
+        wm.addView(f, kp);
+        kbField = f;
+        f.requestFocus();
+        f.postDelayed(() -> {
+            android.view.inputmethod.InputMethodManager im = (android.view.inputmethod.InputMethodManager)
+                    getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
+            im.showSoftInput(f, 0);
+        }, 150);
+    }
+
+    private void closeKeyboard() {
+        if (kbField == null) return;
+        try { wm.removeView(kbField); } catch (Exception ignored) {}
+        kbField = null;
+    }
+
     // ---- PC link --------------------------------------------------------------------------------
     @Override
     public void onMode(String m) {
@@ -159,6 +239,7 @@ public class OverlayView extends View implements Net.Listener {
             boolean menu = !(m.equals("none") || m.startsWith("Loading"));
             if (menu != inMenu) {
                 inMenu = menu;
+                for (El e : els) e.latched = false;
                 releaseAll();
                 invalidate();
             }
@@ -198,7 +279,11 @@ public class OverlayView extends View implements Net.Listener {
                 float x = ev.getX(idx), y = ev.getY(idx);
                 El e = hit(x, y);
                 if (e == null) break;
-                if (e.kind == TOGGLE_TOP || e.kind == HIDE) {
+                if (e.kind == LATCH) {
+                    e.latched = !e.latched;
+                    break;
+                }
+                if (e.kind == TOGGLE_TOP || e.kind == HIDE || e.kind == KEYBOARD) {
                     Ptr p = new Ptr();         // act on release, like OpenMW-Android's custom buttons
                     p.el = e;
                     ptrs.put(ev.getPointerId(idx), p);
@@ -209,6 +294,7 @@ public class OverlayView extends View implements Net.Listener {
                 p.ix = p.x = p.lx = x;
                 p.iy = p.y = p.ly = y;
                 p.down = System.currentTimeMillis();
+                p.down2 = ev.getEventTime();
                 ptrs.put(ev.getPointerId(idx), p);
                 break;
             }
@@ -220,7 +306,17 @@ public class OverlayView extends View implements Net.Listener {
                     float size = p.el.r.width();
                     if (p.el.kind == JOY_RIGHT && size > 0) {
                         // OpenMW-Android: mouseScalingFactor 900 over the stick's size
-                        net.addMouse((nx - p.lx) * 900f / size * lookSpeed, (ny - p.ly) * 900f / size * lookSpeed);
+                        float gain = 900f / size * lookSpeed;
+                        if (inMenu) {
+                            // cursor acceleration: slow thumb = precise, quick flick = far
+                            long t = ev.getEventTime();
+                            float dist = (float) Math.hypot(nx - p.lx, ny - p.ly);
+                            float dt = Math.max(1, t - p.down2);
+                            float speed = dist / dt * 1000f / getResources().getDisplayMetrics().density; // dp per second
+                            gain *= 0.35f + Math.min(2.2f, speed / 600f);
+                            p.down2 = t;
+                        }
+                        net.addMouse((nx - p.lx) * gain, (ny - p.ly) * gain);
                     } else if (p.el.kind == ATTACK && size > 0 && System.currentTimeMillis() - p.down > 100) {
                         // hold attack for 100 ms, then dragging aims (factor 400)
                         net.addMouse((nx - p.lx) * 400f / size * lookSpeed, (ny - p.ly) * 400f / size * lookSpeed);
@@ -236,6 +332,7 @@ public class OverlayView extends View implements Net.Listener {
                 if (p != null && p.el != null) {
                     if (p.el.kind == TOGGLE_TOP) topVisible = !topVisible;
                     else if (p.el.kind == HIDE) { setHidden(true); return true; }
+                    else if (p.el.kind == KEYBOARD) { openKeyboard(); }
                 }
                 break;
             }
@@ -282,6 +379,7 @@ public class OverlayView extends View implements Net.Listener {
                     break;
             }
         }
+        for (El e : els) if (e.kind == LATCH && e.latched && visible(e)) keys |= 1 << e.bit;
         net.lx = lx;
         net.ly = ly;
         net.keys = keys;
@@ -303,7 +401,14 @@ public class OverlayView extends View implements Net.Listener {
             if (e.kind == JOY_LEFT || e.kind == JOY_RIGHT) {
                 drawJoystick(cv, e);
             } else if (e.image != 0) {
-                cv.drawBitmap(bitmaps.get(e.image), null, e.r, img);
+                if (e.kind == LATCH && e.latched) {
+                    cv.drawRoundRect(e.r, e.r.width() * 0.2f, e.r.width() * 0.2f, box);
+                    img.setAlpha(255);
+                    cv.drawBitmap(bitmaps.get(e.image), null, e.r, img);
+                    img.setAlpha(Math.round(0.4f * 255));
+                } else {
+                    cv.drawBitmap(bitmaps.get(e.image), null, e.r, img);
+                }
             } else {
                 cv.drawRoundRect(e.r, e.r.width() * 0.15f, e.r.width() * 0.15f, box);
                 label.setTextSize(e.r.width() * (e.text.length() > 3 ? 0.24f : 0.32f));

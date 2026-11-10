@@ -29,9 +29,10 @@ public class Net {
             LS = 9, RS = 10, UP = 11, DOWN = 12, LEFT = 13, RIGHT = 14;
     // keyboard keys
     static final int K_ESC = 0, K_ENTER = 1, K_F5 = 2, K_F9 = 3, K_J = 4, K_K = 5, K_L = 6, K_TAB = 7, K_SPACE = 8,
-            K_E = 9, K_T = 10, K_CTRL = 11, K_R = 12, K_F = 13, K_O = 14;
+            K_E = 9, K_T = 10, K_CTRL = 11, K_R = 12, K_F = 13, K_O = 14,
+            K_SHIFT = 15, K_BACKSPACE = 16;
     // mouse buttons share the key bitmask
-    static final int M_LEFT = 20, M_RIGHT = 21;
+    static final int M_LEFT = 20, M_RIGHT = 21, WHEEL_UP = 22, WHEEL_DOWN = 23;
 
     private final String host;
     private final byte[] key;
@@ -67,6 +68,13 @@ public class Net {
 
     void setListener(Listener l) { listener = l; }
 
+    private final java.util.concurrent.ConcurrentLinkedQueue<String> textQueue = new java.util.concurrent.ConcurrentLinkedQueue<>();
+
+    /** Type text on the PC ("\b" = backspace, "\n" = enter). */
+    void sendText(String t) {
+        if (t != null && !t.isEmpty()) textQueue.add(t);
+    }
+
     synchronized void addMouse(float dx, float dy) {
         mdx += Math.round(dx);
         mdy += Math.round(dy);
@@ -100,6 +108,16 @@ public class Net {
             byte[] in = new byte[128];
             while (running) {
                 long t0 = System.currentTimeMillis();
+                String t;
+                while (addr != null && (t = textQueue.poll()) != null) {
+                    StringBuilder hex = new StringBuilder();
+                    for (byte b : t.getBytes("UTF-8")) hex.append(String.format("%02x", b));
+                    String tm = String.format(Locale.US, "MWT2X %s %d %d %s", session, System.currentTimeMillis(), seq++, hex);
+                    byte[] tb = (tm + " " + sign(tm)).getBytes("US-ASCII");
+                    for (int rep = 0; rep < 3; rep++) {          // UDP can drop packets; the PC ignores the copies
+                        try { s.send(new DatagramPacket(tb, tb.length, addr, PORT)); } catch (java.io.IOException ignored) {}
+                    }
+                }
                 int[] m = takeMouse();
                 String msg = String.format(Locale.US, "MWT2 %s %d %d %.3f %.3f %.3f %.3f %.2f %.2f %d %d %d %d",
                         session, System.currentTimeMillis(), seq++, lx, ly, rx, ry, lt, rt, buttons, m[0], m[1], keys);

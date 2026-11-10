@@ -14,9 +14,16 @@ and keyboard.
   - A ≡ top bar with 3rd person, Quicksave, Journal and Rest. Its mouse icon hides the overlay so you can tap
     Steam Link itself.
 - **A Collector's Ledger button** (gem) on the left, for the companion mod.
-- **Menus work like OpenMW for Android:** when a game menu opens, only the right stick (which moves the cursor), Attack
-  (which clicks), Pause, Journal and Inventory stay. The overlay switches **automatically**, because the PC tells it when
-  a menu is open.
+- **Menus work like OpenMW for Android:** when a game menu opens, the right stick moves the cursor and Attack clicks.
+  The overlay switches **automatically**, because the PC tells it when a menu is open. Extras in menus:
+  - **▲ ▼** scroll lists (saves, inventory, topics, spells), and also zoom the map.
+  - **✓** is Enter/OK.
+  - **Grab (hand):** tap to pick an item up, steer with the right stick, tap again to drop. One thumb for
+    equipping, drinking, dropping and moving items.
+  - **Shift (arrow):** tap to hold Shift, for moving whole stacks.
+  - The cursor accelerates: slow thumb moves are precise, quick flicks cross the screen.
+- **Keyboard (in the ≡ top bar):** opens your phone's keyboard and types into the game, for character names, save
+  names and the console.
 
 ## Install
 
